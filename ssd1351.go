@@ -1,15 +1,17 @@
 package ssd1351
 
 import (
-	"github.com/stianeikeland/go-rpio/v4"
+	"errors"
 	"time"
+
+	"github.com/stianeikeland/go-rpio/v4"
 )
 
 const (
-	spiSpeedHz    = 9000000 // 9 MHz
-	spiModePol    = 0       // SPI mode 0 (POL)
-	spiModePha    = 0       // SPI mode 0 (PHA)
-	spiCSPolarity = 0       // CS active low
+	spiSpeedHz    = 24000000 // 24 MHz
+	spiModePol    = 0        // SPI mode 0 (POL)
+	spiModePha    = 0        // SPI mode 0 (PHA)
+	spiCSPolarity = 0        // CS active low
 
 	ssd1351CmdCommandLock    = 0xFD // SSD1351.pdf: 10.1.23 Set Command Lock (FDh)
 	ssd1351CmdDisplayOff     = 0xAE // SSD1351.pdf: 10.1.10 Set Sleep mode ON/OFF (AEh / AFh)
@@ -37,6 +39,8 @@ const (
 	oledPixelsXY = 128
 )
 
+var boundsErr = errors.New("invalid bounds")
+
 // Setup opens the connection to the OLED using four-wire SPI
 // dev: The rpio.SpiDev to use
 // slave: The slave chip number to use
@@ -63,7 +67,7 @@ func Setup(dev rpio.SpiDev, slave uint8, rstPin rpio.Pin, csPin rpio.Pin, dcPin 
 	return &SSD1351{dev: dev, rstPin: rstPin, csPin: csPin, dcPin: dcPin, openGpio: openGpio}, nil
 }
 
-type CMD struct {
+type cmdDataTuple struct {
 	cmd  uint8
 	data []uint8
 }
@@ -71,8 +75,8 @@ type CMD struct {
 // defConfSeq returns the the default configuration sequence for the SSD1351
 // This sequence is used in Waveshare's example for Python (https://www.waveshare.com/wiki/1.5inch_OLED_Module)
 // I don't comprehend anything at the moment and may review this someday...
-func defConfSeq() []CMD {
-	return []CMD{
+func defConfSeq() []cmdDataTuple {
+	return []cmdDataTuple{
 		{ssd1351CmdCommandLock, []uint8{0x12}},                 // reset mcu protection status
 		{ssd1351CmdCommandLock, []uint8{0xB1}},                 // make commands A2,B1,B3,BB,BE,C1 accessible
 		{ssd1351CmdDisplayOff, nil},                            // instruct display to sleep
@@ -113,8 +117,8 @@ func (s *SSD1351) Init() {
 	s.rstPin.High()
 	time.Sleep(300 * time.Millisecond)
 	// configure SSD1351
-	for _, cmd := range defConfSeq() {
-		s.send(cmd)
+	for _, tuple := range defConfSeq() {
+		s.txTuple(tuple)
 	}
 	// clear display and activate
 	s.ClearScreen()
@@ -139,17 +143,17 @@ func (s *SSD1351) txData(data ...byte) {
 	s.csPin.High()
 }
 
-func (s *SSD1351) send(cmd CMD) {
-	s.txCmd(cmd.cmd)
-	s.txData(cmd.data...)
+func (s *SSD1351) txTuple(tuple cmdDataTuple) {
+	s.txCmd(tuple.cmd)
+	s.txData(tuple.data...)
 }
 
 func (s *SSD1351) setGDDRAMAddr(c1 uint8, c2 uint8, r1 uint8, r2 uint8) {
-	s.send(CMD{
+	s.txTuple(cmdDataTuple{
 		cmd:  ssd1351CmdSetColumn,
 		data: []uint8{c1, c2},
 	})
-	s.send(CMD{
+	s.txTuple(cmdDataTuple{
 		cmd:  ssd1351CmdSetRow,
 		data: []uint8{r1, r2},
 	})
@@ -165,9 +169,43 @@ func (s *SSD1351) ClearScreen() {
 	s.txData(clearBytes...)
 }
 
-func (s *SSD1351) DrawPixel(x uint8, y uint8, color uint16) {
+func (s *SSD1351) DrawPixel(x uint8, y uint8, color uint16) error {
+	if x > oledPixelsXY-1 || y > oledPixelsXY-1 {
+		return boundsErr
+	}
 	s.setGDDRAMAddr(x, x, y, y)
 	s.txData([]uint8{uint8(color >> 8), uint8(color & 0xFF)}...)
+	return nil
+}
+
+func (s *SSD1351) DrawBlock(x uint8, y uint8, w uint8, h uint8, color uint16) error {
+	if x+w > oledPixelsXY || y+h > oledPixelsXY {
+		return boundsErr
+	}
+	s.setGDDRAMAddr(x, x+w-1, y, y+h-1)
+	fillBytes := make([]uint8, uint32(w)*uint32(h)*2)
+	var i uint16
+	for i = 0; i < uint16(w)*uint16(h); i++ {
+		fillBytes[i*2] = uint8(color >> 8)
+		fillBytes[(i*2)+1] = uint8(color & 0xFF)
+	}
+	s.txData(fillBytes...)
+	return nil
+}
+
+func (s *SSD1351) DrawPixels(x uint8, y uint8, w uint8, h uint8, pixels []uint16) error {
+	if x+w > oledPixelsXY || y+h > oledPixelsXY || int(w)*int(h) != len(pixels) {
+		return boundsErr
+	}
+	s.setGDDRAMAddr(x, x+w-1, y, y+h-1)
+	pixelBytes := make([]uint8, uint32(w)*uint32(h)*2)
+	var i uint16
+	for i = 0; i < uint16(w)*uint16(h); i++ {
+		pixelBytes[i*2] = uint8(pixels[i] >> 8)
+		pixelBytes[(i*2)+1] = uint8(pixels[i] & 0xFF)
+	}
+	s.txData(pixelBytes...)
+	return nil
 }
 
 func (s *SSD1351) Shutdown() error {
@@ -178,4 +216,9 @@ func (s *SSD1351) Shutdown() error {
 		return rpio.Close()
 	}
 	return nil
+}
+
+func RGBto16bit(r uint8, g uint8, b uint8) uint16 {
+	// 0bRRRRR-GGGGGG-BBBBB
+	return uint16(r>>3)<<11 | uint16(g>>2)<<5 | uint16(b>>3)
 }
