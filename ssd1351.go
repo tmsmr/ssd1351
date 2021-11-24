@@ -39,7 +39,7 @@ const (
 	oledPixelsXY = 128
 )
 
-var boundsErr = errors.New("invalid bounds")
+var errBounds = errors.New("invalid bounds")
 
 // Setup opens the connection to the OLED using four-wire SPI
 // dev: The rpio.SpiDev to use
@@ -171,7 +171,7 @@ func (s *SSD1351) ClearScreen() {
 
 func (s *SSD1351) DrawPixel(x uint8, y uint8, color uint16) error {
 	if x > oledPixelsXY-1 || y > oledPixelsXY-1 {
-		return boundsErr
+		return errBounds
 	}
 	s.setGDDRAMAddr(x, x, y, y)
 	s.txData([]uint8{uint8(color >> 8), uint8(color & 0xFF)}...)
@@ -180,7 +180,7 @@ func (s *SSD1351) DrawPixel(x uint8, y uint8, color uint16) error {
 
 func (s *SSD1351) DrawBlock(x uint8, y uint8, w uint8, h uint8, color uint16) error {
 	if x+w > oledPixelsXY || y+h > oledPixelsXY {
-		return boundsErr
+		return errBounds
 	}
 	s.setGDDRAMAddr(x, x+w-1, y, y+h-1)
 	fillBytes := make([]uint8, uint32(w)*uint32(h)*2)
@@ -195,7 +195,7 @@ func (s *SSD1351) DrawBlock(x uint8, y uint8, w uint8, h uint8, color uint16) er
 
 func (s *SSD1351) DrawPixels(x uint8, y uint8, w uint8, h uint8, pixels []uint16) error {
 	if x+w > oledPixelsXY || y+h > oledPixelsXY || int(w)*int(h) != len(pixels) {
-		return boundsErr
+		return errBounds
 	}
 	s.setGDDRAMAddr(x, x+w-1, y, y+h-1)
 	pixelBytes := make([]uint8, uint32(w)*uint32(h)*2)
@@ -216,9 +216,4 @@ func (s *SSD1351) Shutdown() error {
 		return rpio.Close()
 	}
 	return nil
-}
-
-func RGBto16bit(r uint8, g uint8, b uint8) uint16 {
-	// 0bRRRRR-GGGGGG-BBBBB
-	return uint16(r>>3)<<11 | uint16(g>>2)<<5 | uint16(b>>3)
 }
