@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	spiSpeedHz    = 24000000 // 24 MHz
+	spiSpeedHz    = 12000000 // 12 MHz
 	spiModePol    = 0        // SPI mode 0 (POL)
 	spiModePha    = 0        // SPI mode 0 (PHA)
 	spiCSPolarity = 0        // CS active low
