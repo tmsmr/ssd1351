@@ -41,13 +41,14 @@ const (
 
 var errBounds = errors.New("invalid bounds")
 
-// Setup opens the connection to the OLED using four-wire SPI
-// dev: The rpio.SpiDev to use
-// slave: The slave chip number to use
-// rstPin: Reset rpio.Pin, needed for initialization
-// csPin: Chip select rpio.Pin, needed to switch between command/data (8.1.3 MCU Serial Interface (4-wire SPI), 8.4 Command Decoder)
-// dcPin: Data/command select rpio.Pin, needed to switch between command/data (8.1.3 MCU Serial Interface (4-wire SPI), 8.4 Command Decoder)
-// openGpio: Shall this package call rpio.Open()/rpio.Close() or is this performed outside?
+// Setup opens the connection to the SSD1351 using four-wire SPI (and optionally calls rpio.Open).
+//
+// dev: The rpio.SpiDev to use /
+// slave: The slave chip number to use /
+// rstPin: Reset rpio.Pin, needed for initialization /
+// csPin: Chip select rpio.Pin, needed to switch between command/data (SSD1351.pdf: 8.1.3 MCU Serial Interface (4-wire SPI), 8.4 Command Decoder) /
+// dcPin: Data/command select rpio.Pin, needed to switch between command/data (SSD1351.pdf: 8.1.3 MCU Serial Interface (4-wire SPI), 8.4 Command Decoder) /
+// openGpio: Shall this package call rpio.Open()/rpio.Close() or is this performed somewhere else?
 func Setup(dev rpio.SpiDev, slave uint8, rstPin rpio.Pin, csPin rpio.Pin, dcPin rpio.Pin, openGpio bool) (*SSD1351, error) {
 	if openGpio {
 		if err := rpio.Open(); err != nil {
@@ -72,8 +73,9 @@ type cmdDataTuple struct {
 	data []uint8
 }
 
-// defConfSeq returns the the default configuration sequence for the SSD1351
-// This sequence is used in Waveshare's example for Python (https://www.waveshare.com/wiki/1.5inch_OLED_Module)
+// defConfSeq returns the the default configuration sequence for the SSD1351.
+//
+// This sequence is used in Waveshare's example for Python (https://www.waveshare.com/wiki/1.5inch_OLED_Module).
 // I don't comprehend anything at the moment and may review this someday...
 func defConfSeq() []cmdDataTuple {
 	return []cmdDataTuple{
@@ -101,6 +103,7 @@ func defConfSeq() []cmdDataTuple {
 	}
 }
 
+// SSD1351 contains all required handles to the controller. Use Setup to generate the instance.
 type SSD1351 struct {
 	dev      rpio.SpiDev
 	rstPin   rpio.Pin
@@ -109,26 +112,26 @@ type SSD1351 struct {
 	openGpio bool
 }
 
+// Init resets/initializes/configures the SSD1351 based on defConfSeq.
 func (s *SSD1351) Init() {
-	// reset SSD1351
 	s.csPin.Low()
 	s.rstPin.Low()
 	time.Sleep(1 * time.Millisecond)
 	s.rstPin.High()
 	time.Sleep(300 * time.Millisecond)
-	// configure SSD1351
 	for _, tuple := range defConfSeq() {
 		s.txTuple(tuple)
 	}
-	// clear display and activate
 	s.ClearScreen()
 	s.txCmd(ssd1351CmdDisplayOn)
 }
 
+// tx transmits 0...n bytes via SPI.
 func (s *SSD1351) tx(data ...byte) {
 	rpio.SpiTransmit(data...)
 }
 
+// txCmd trasmits a command (1 byte).
 func (s *SSD1351) txCmd(cmd byte) {
 	s.csPin.Low()
 	s.dcPin.Low()
@@ -136,6 +139,7 @@ func (s *SSD1351) txCmd(cmd byte) {
 	s.csPin.High()
 }
 
+// txData trasmits data (0...n bytes).
 func (s *SSD1351) txData(data ...byte) {
 	s.csPin.Low()
 	s.dcPin.High()
@@ -143,11 +147,13 @@ func (s *SSD1351) txData(data ...byte) {
 	s.csPin.High()
 }
 
+// txTuple is a helper to trasmit a command followed by 0...n bytes data using the cmdDataTuple struct.
 func (s *SSD1351) txTuple(tuple cmdDataTuple) {
 	s.txCmd(tuple.cmd)
 	s.txData(tuple.data...)
 }
 
+// setGDDRAMAddr sets the 'rectangle' to be filled with pixel data afterwards.
 func (s *SSD1351) setGDDRAMAddr(c1 uint8, c2 uint8, r1 uint8, r2 uint8) {
 	s.txTuple(cmdDataTuple{
 		cmd:  ssd1351CmdSetColumn,
@@ -160,6 +166,7 @@ func (s *SSD1351) setGDDRAMAddr(c1 uint8, c2 uint8, r1 uint8, r2 uint8) {
 	s.txCmd(ssd1351CmdWriteRAM)
 }
 
+// ClearScreen sets every pixel on the screen to 0x0000.
 func (s *SSD1351) ClearScreen() {
 	s.setGDDRAMAddr(0, oledPixelsXY-1, 0, oledPixelsXY-1)
 	clearBytes := make([]uint8, oledPixelsXY*oledPixelsXY*2)
@@ -169,6 +176,7 @@ func (s *SSD1351) ClearScreen() {
 	s.txData(clearBytes...)
 }
 
+// DrawPixel sets the pixel at x, y to the desired color (x and y are indices 0...nr_pixels-1).
 func (s *SSD1351) DrawPixel(x uint8, y uint8, color uint16) error {
 	if x > oledPixelsXY-1 || y > oledPixelsXY-1 {
 		return errBounds
@@ -178,6 +186,7 @@ func (s *SSD1351) DrawPixel(x uint8, y uint8, color uint16) error {
 	return nil
 }
 
+// DrawBlock sets all pixels in the rectangle x, y / w, h to the desired color (x and y are indices 0...nr_pixels-1).
 func (s *SSD1351) DrawBlock(x uint8, y uint8, w uint8, h uint8, color uint16) error {
 	if x+w > oledPixelsXY || y+h > oledPixelsXY {
 		return errBounds
@@ -193,6 +202,7 @@ func (s *SSD1351) DrawBlock(x uint8, y uint8, w uint8, h uint8, color uint16) er
 	return nil
 }
 
+// DrawPixels sets the pixels in the rectangle x, y / w, h to the colors defined in pixels (row-by-row).
 func (s *SSD1351) DrawPixels(x uint8, y uint8, w uint8, h uint8, pixels []uint16) error {
 	if x+w > oledPixelsXY || y+h > oledPixelsXY || int(w)*int(h) != len(pixels) {
 		return errBounds
@@ -208,6 +218,7 @@ func (s *SSD1351) DrawPixels(x uint8, y uint8, w uint8, h uint8, pixels []uint16
 	return nil
 }
 
+// Shutdown instructs the SSD1351 to turn off the display and closes the connection.
 func (s *SSD1351) Shutdown() error {
 	s.txCmd(ssd1351CmdDisplayOff)
 	time.Sleep(100 * time.Millisecond)
