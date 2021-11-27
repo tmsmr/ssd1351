@@ -37,6 +37,29 @@ func TestInit(t *testing.T) {
 	_ = oled.Shutdown()
 }
 
+func TestOutOfBounds(t *testing.T) {
+	oled, err := Setup(rpio.Spi0, 0, rstPin, csPin, dcPin, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	oled.Init()
+
+	if err := oled.DrawPixel(128, 128, 0xFFF); err == nil {
+		t.Fatal("bounds check not working")
+	}
+
+	if err := oled.DrawBlock(120, 120, 25, 25, 0xFFF); err == nil {
+		t.Fatal("bounds check not working")
+	}
+
+	if err := oled.DrawPixels(127, 127, 2, 2, []uint16{0xFFF, 0xFFF, 0xFFF, 0xFFF}); err == nil {
+		t.Fatal("bounds check not working")
+	}
+
+	_ = oled.Shutdown()
+}
+
 func TestDrawPixel(t *testing.T) {
 	oled, err := Setup(rpio.Spi0, 0, rstPin, csPin, dcPin, false)
 	if err != nil {
